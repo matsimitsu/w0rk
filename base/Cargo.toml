@@ -1,0 +1,16 @@
+[package]
+name = "base"
+version = "0.1.0"
+authors = ["Robert Beekman <robert@matsimitsu.nl>"]
+license = "MIT"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+thiserror = { workspace = true }
+regex = { workspace = true }
+lazy_static = { workspace = true }

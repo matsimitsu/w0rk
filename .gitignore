@@ -1,0 +1,36 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Editor and IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Environment files
+.env
+.env.*
+.envrc
+!.env.example
+
+# Local development files
+work_dir/
+/work/
+/tmp/
+*.log
+
+# Generated files
+*.pdb
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Debug files
+*.dSYM/
+
+# Configuration files that might contain sensitive data
+.claude/settings.local.json

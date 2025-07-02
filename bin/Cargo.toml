@@ -1,0 +1,15 @@
+[package]
+name = "w0rk"
+version = "0.1.51"
+edition = "2021"
+default-run = "w0rk"
+
+[dependencies]
+tokio = { workspace = true }
+anyhow = { workspace = true }
+
+base = { path = "../base" }
+sync = { path = "../sync" }
+
+clap = { version = "4.5.7", features = ["derive"] }
+directories = "5.0.1"

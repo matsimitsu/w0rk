@@ -1,0 +1,16 @@
+[package]
+name = "sync"
+version = "0.1.0"
+authors = ["Robert Beekman <robert@matsimitsu.nl>"]
+license = "MIT"
+edition = "2021"
+
+[dependencies]
+time = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+reqwest = { workspace = true }
+base = { path = "../base" }
