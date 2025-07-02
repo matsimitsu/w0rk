@@ -34,13 +34,13 @@ impl SlackMessage for Day {
                 text.push_str(&format!("{} {}\n", task.state.to_emoji(), task.name));
             } else {
                 if !text.is_empty() {
-                    text.push_str(&format!("\n"));
+                    text.push('\n');
                 }
                 text.push_str(&format!("*{}*\n", task.name));
                 for subtask in &task.subtasks {
                     text.push_str(&format!("{} {}\n", subtask.state.to_emoji(), subtask.name));
                 }
-                text.push_str(&format!("\n"));
+                text.push('\n');
             }
         }
 
@@ -73,6 +73,7 @@ pub struct Slack {
 #[derive(Deserialize, Debug)]
 pub struct Response {
     pub ok: bool,
+    #[allow(dead_code)]
     pub error: Option<String>,
     pub ts: Option<String>,
 }
