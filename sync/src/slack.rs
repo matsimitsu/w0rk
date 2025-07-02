@@ -43,6 +43,8 @@ impl SlackMessage for Day {
                 text.push_str(&format!("\n"));
             }
         }
+
+        text.push_str("\nPowered by <https://github.com/matsimitsu/w0rk|w0rk>");
         text
     }
 
