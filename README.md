@@ -1,5 +1,7 @@
 # W0rk - Task Management CLI
 
+[![CI](https://github.com/matsimitsu/w0rk/actions/workflows/ci.yml/badge.svg)](https://github.com/matsimitsu/w0rk/actions/workflows/ci.yml)
+
 W0rk is a minimalist task management CLI tool written in Rust that helps you organize daily tasks and recurring activities. It features Slack integration for syncing your tasks and a simple, file-based storage system.
 
 ## Features

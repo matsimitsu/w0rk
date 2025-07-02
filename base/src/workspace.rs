@@ -19,7 +19,7 @@ impl Workspace {
             return Err(Error::WorkspaceIsNotDirectory);
         }
 
-        let name = match path.iter().last().and_then(|res| res.to_str()) {
+        let name = match path.iter().next_back().and_then(|res| res.to_str()) {
             Some(name) => name.to_string(),
             None => {
                 return Err(Error::InvalidWorkspaceName(
