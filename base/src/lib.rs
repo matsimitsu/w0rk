@@ -1,4 +1,4 @@
-pub use config::Config;
+pub use config::{Config, Rewrite};
 pub use day::Day;
 pub use task::{State as TaskState, Task};
 use thiserror::Error;

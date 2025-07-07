@@ -48,7 +48,7 @@ impl<'a> Syncer<'a> {
         if let Some(slack_config) = &self.config.slack {
             let mut slack =
                 slack::Slack::new(&self.state_dir, &slack_config.token, &slack_config.channel)?;
-            slack.sync_message(today).await?;
+            slack.sync_message(today, &slack_config.rewrites).await?;
         }
 
         Ok(())

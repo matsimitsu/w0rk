@@ -1,11 +1,11 @@
 use super::SyncError;
-use base::{Day, TaskState};
+use base::{Day, Rewrite, TaskState};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use time::Date;
 
 pub trait SlackMessage {
-    fn to_message(&self) -> String;
+    fn to_message(&self, rewrites: &[Rewrite]) -> String;
     fn date(&self) -> Date;
 }
 
@@ -26,31 +26,45 @@ impl SlackEmoji for TaskState {
 }
 
 impl SlackMessage for Day {
-    fn to_message(&self) -> String {
+    fn to_message(&self, rewrites: &[Rewrite]) -> String {
         let mut text = "".to_string();
 
         for task in &self.tasks {
             if task.subtasks.is_empty() {
-                text.push_str(&format!("{} {}\n", task.state.to_emoji(), task.name));
+                text.push_str(&format!(
+                    "{} {}\n",
+                    task.state.to_emoji(),
+                    rewrite_name(&task.name, rewrites)
+                ));
             } else {
                 if !text.is_empty() {
                     text.push('\n');
                 }
                 text.push_str(&format!("*{}*\n", task.name));
                 for subtask in &task.subtasks {
-                    text.push_str(&format!("{} {}\n", subtask.state.to_emoji(), subtask.name));
+                    text.push_str(&format!(
+                        "{} {}\n",
+                        subtask.state.to_emoji(),
+                        rewrite_name(&subtask.name, rewrites)
+                    ));
                 }
                 text.push('\n');
             }
         }
-
-        text.push_str("\nPowered by <https://github.com/matsimitsu/w0rk|w0rk>");
         text
     }
 
     fn date(&self) -> Date {
         self.date
     }
+}
+
+fn rewrite_name(name: &str, rewrites: &[Rewrite]) -> String {
+    let mut name = name.to_string();
+    for rewrite in rewrites {
+        rewrite.rewrite(&mut name);
+    }
+    name
 }
 
 pub type SlackSyncState = Vec<SlackDayState>;
@@ -121,19 +135,24 @@ impl Slack {
             .await
     }
 
-    pub async fn sync_message<M>(&mut self, message: M) -> Result<(), SyncError>
+    pub async fn sync_message<M>(
+        &mut self,
+        message: M,
+        rewrites: &[Rewrite],
+    ) -> Result<(), SyncError>
     where
         M: SlackMessage,
     {
         let date = message.date();
         let state = self.state.iter().find(|state| state.date == date);
+        let text = message.to_message(rewrites);
 
         match state {
             Some(state) => {
-                self.update_message(&state.ts, message).await?;
+                self.update_message(state.ts.to_owned(), text).await?;
             }
             None => {
-                let result = self.send_message(message).await?;
+                let result = self.send_message(text).await?;
                 if result.ok {
                     self.state.push(SlackDayState {
                         channel_id: self.channel_id.clone(),
@@ -148,10 +167,7 @@ impl Slack {
         Ok(())
     }
 
-    async fn send_message<M>(&self, message: M) -> Result<Response, SyncError>
-    where
-        M: SlackMessage,
-    {
+    async fn send_message(&self, message: String) -> Result<Response, SyncError> {
         let result = self
             .post(
                 "https://slack.com/api/chat.postMessage",
@@ -163,7 +179,7 @@ impl Slack {
                             "elements": [
                                 {
                                     "type": "mrkdwn",
-                                    "text": message.to_message()
+                                    "text": message
                                 }
                             ]
                         }
@@ -175,10 +191,11 @@ impl Slack {
         Ok(result)
     }
 
-    async fn update_message<M>(&self, ts: &str, message: M) -> Result<Response, reqwest::Error>
-    where
-        M: SlackMessage,
-    {
+    async fn update_message(
+        &self,
+        ts: String,
+        message: String,
+    ) -> Result<Response, reqwest::Error> {
         let result = self
             .post(
                 "https://slack.com/api/chat.update",
@@ -191,7 +208,7 @@ impl Slack {
                           "elements": [
                               {
                                   "type": "mrkdwn",
-                                  "text": message.to_message()
+                                  "text": message
                               }
                           ]
                       }
