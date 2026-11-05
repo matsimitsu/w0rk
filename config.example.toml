@@ -1,0 +1,159 @@
+# Copy to ~/.config/cockpit/config.toml and edit.
+
+# ── Rex ──────────────────────────────────────────────────────────────────
+
+[rex]
+session = "cockpit"     # agents get a pane each in this session (created if missing)
+max_running = 4         # agents running or waiting at once; the rest queue
+
+# ── Sources ──────────────────────────────────────────────────────────────
+
+[source.github]
+poll_seconds = 60
+
+# Review requests assigned to you.
+[[source.github.query]]
+name = "review-requests"
+kind = "pr.review"
+role = "review-requested"          # review-requested | assignee | author
+exclude_labels = ["wip"]
+owners = ["appsignal"]                      # allowlist of orgs/users; empty = any
+# repos = ["appsignal/appsignal-server"]   # allowlist of repos; empty = any
+# labels = ["backend"]                      # require these labels
+# include_drafts = false
+
+# Your own open PRs, with their review status.
+[[source.github.query]]
+name = "mine"
+kind = "pr.mine"
+role = "author"
+owners = ["appsignal"]
+include_drafts = true
+
+[source.appsignal]
+# org = "appsignal"                # only needed for deep links to incidents
+poll_seconds = 60
+
+first_run_lookback_hours = 24       # how far back "new since last run" looks on the very first run
+
+[[source.appsignal.app]]
+name = "AppSignal"
+environment = "production"
+namespaces = ["web", "background"]  # empty = all namespaces
+states = ["OPEN", "WIP"]            # OPEN, WIP, CLOSED. WIP shows who is already on it
+new_since_last_run = true           # only incidents created since cockpit last ran
+
+# ── Profiles: what to run ────────────────────────────────────────────────
+# Templates see `item` (id, title, url, kind, fingerprint, attrs.*) and `previous`
+# (the fingerprint before a `changed` event, else none).
+
+[profile.code-review]
+prompt = """
+Use the code-review skill on {{ item.url }}.
+
+When you are done, offer to clean up your temporary worktree. Once I agree: note `pwd`, move to
+the main checkout (the parent of `git rev-parse --path-format=absolute --git-common-dir`) and run
+`git worktree remove --force <the worktree path>`.
+"""
+cwd = "~/Sites/appsignal/{{ item.attrs.repo | basename }}"
+worktree = true
+fetch_ref = "pull/{{ item.attrs.number }}/head"   # review the PR's commit, not the repo's HEAD
+
+# For PRs you reviewed before and were asked about again: only look at what changed since.
+[profile.re-review]
+prompt = """
+Re-review {{ item.url }}. I reviewed it before at commit {{ item.attrs.my_review_commit }} (my last verdict:
+{{ item.attrs.my_review }}). Only review what changed since then
+(`git diff {{ item.attrs.my_review_commit }}..HEAD`), and check whether my earlier comments were addressed.
+Use the code-review skill for the changed code.
+
+When you are done, offer to clean up your temporary worktree. Once I agree: note `pwd`, move to
+the main checkout (the parent of `git rev-parse --path-format=absolute --git-common-dir`) and run
+`git worktree remove --force <the worktree path>`.
+"""
+cwd = "~/Sites/appsignal/{{ item.attrs.repo | basename }}"
+worktree = true
+fetch_ref = "pull/{{ item.attrs.number }}/head"
+
+# Dependabot PRs. Merging is the agent's call, but only on a clean verdict.
+[profile.dependabot-check]
+prompt = """
+Check Dependabot PR {{ item.url }} ({{ item.title }}).
+1. Read the dependency's changelog and the source diff between the two versions. Look for anything
+   odd: new install or post-install scripts, new network calls or telemetry, obfuscated code, changed
+   maintainers or repository, unexpected permissions.
+2. Check that CI is green (`gh pr checks {{ item.attrs.number }} --repo {{ item.attrs.repo }}`).
+3. Report your verdict with `cockpit report ok "<summary>"` or `cockpit report needs-you "<what looks odd>"`.
+4. Only if the verdict is ok, CI is green and this is a patch or minor bump: merge it with
+   `gh pr merge {{ item.attrs.number }} --repo {{ item.attrs.repo }} --squash`. Otherwise do not merge.
+"""
+cwd = "~/Sites/appsignal/{{ item.attrs.repo | basename }}"
+
+# Your own PRs: fetch the review comments and address them.
+[profile.address-review]
+prompt = """
+Address the review feedback on my PR {{ item.url }}. Fetch the reviews and comments
+(`gh pr view {{ item.attrs.number }} --repo {{ item.attrs.repo }} --comments`, and the inline review comments via
+`gh api repos/{{ item.attrs.repo }}/pulls/{{ item.attrs.number }}/comments`). Get on the PR's branch with
+`gh pr checkout {{ item.attrs.number }}`, fix what is worth fixing, run the tests, commit and push, then
+reply to the threads you addressed. Tell me about anything you disagree with instead of changing it.
+
+When you are done, offer to clean up your temporary worktree. Once I agree: note `pwd`, move to
+the main checkout (the parent of `git rev-parse --path-format=absolute --git-common-dir`) and run
+`git worktree remove --force <the worktree path>`.
+"""
+cwd = "~/Sites/appsignal/{{ item.attrs.repo | basename }}"
+worktree = true
+fetch_ref = "pull/{{ item.attrs.number }}/head"
+
+[profile.debug-incident]
+prompt = """
+Investigate AppSignal incident #{{ item.attrs.number }} in {{ item.attrs.app }} \
+({{ item.attrs.exception_name }}: {{ item.attrs.message }}, namespace {{ item.attrs.namespace }}).
+Use the AppSignal MCP/CLI to find the root cause and report what you find.
+"""
+cwd = "~/Sites/appsignal/appsignal-server"
+
+# ── Rules: which events spawn which profile ──────────────────────────────
+# Rules are tried in order, and the profile picker (s) lists the matching ones first.
+
+[[rule]]
+name = "dependabot"
+when = { kind = "pr.review", attrs = { "/author" = { glob = "dependabot*" } } }
+spawn = "dependabot-check"
+mode = "suggest"
+
+[[rule]]
+name = "re-review"
+when = { kind = "pr.review", attrs = { "/rereview" = true } }
+spawn = "re-review"
+mode = "suggest"
+
+[[rule]]
+name = "review-requests"
+trigger = "new"                     # new | changed
+when = { kind = "pr.review" }
+spawn = "code-review"
+mode = "suggest"                    # suggest = offer in the TUI, auto = spawn right away
+
+[[rule]]
+name = "my-prs"
+when = { kind = "pr.mine" }
+spawn = "address-review"
+mode = "suggest"
+
+[[rule]]
+name = "new-incidents"
+trigger = "new"
+when = { kind = "incident.exception" }
+spawn = "debug-incident"
+mode = "suggest"
+
+# ── Sections (optional) ──────────────────────────────────────────────────
+# The TUI lists items in sections, each holding what its `when` matches (same syntax as rules).
+# Without any [[section]], you get "PULL REQUESTS" (kind pr.*) and "INCIDENTS" (kind incident.*).
+# AGENTS is always shown last.
+#
+# [[section]]
+# title = "DEPENDABOT"
+# when = { kind = "pr.dependabot" }
