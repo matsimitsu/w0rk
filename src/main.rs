@@ -17,16 +17,13 @@ use clap::{Parser, Subcommand};
 use crate::exec::SystemRunner;
 
 #[derive(Parser)]
-#[command(
-    name = "cockpit",
-    about = "Route notifications to Claude agents in Rex"
-)]
+#[command(name = "w0rk", about = "Route notifications to Claude agents in Rex")]
 struct Cli {
-    /// Config file (default: ~/.config/cockpit/config.toml).
+    /// Config file (default: ~/.config/w0rk/config.toml).
     #[arg(long, global = true)]
     config: Option<std::path::PathBuf>,
-    /// State database (default: ~/.local/state/cockpit/cockpit.db).
-    #[arg(long, global = true, env = "COCKPIT_DB")]
+    /// State database (default: ~/.local/state/w0rk/w0rk.db).
+    #[arg(long, global = true, env = "W0RK_DB")]
     db: Option<std::path::PathBuf>,
     #[command(subcommand)]
     command: Option<Command>,
@@ -116,7 +113,7 @@ async fn run_routes(paths: &config::Paths) -> Result<()> {
     let renderer = actions::Renderer::new(&paths.home);
     let runner = SystemRunner::default();
 
-    for source in sources::build(&config, sources::SourceContext::default()) {
+    for source in sources::build(&config) {
         let items = match source.fetch(&runner).await {
             Ok(items) => items,
             Err(err) => {
@@ -173,7 +170,7 @@ fn run_report(paths: &config::Paths, verdict: model::Verdict, summary: &str) -> 
     let var = std::env::var(hooks::RUN_ID_ENV).ok();
     let run = hooks::run_id_from(var.as_deref()).ok_or_else(|| {
         anyhow::anyhow!(
-            "{} is not set: not running inside a cockpit pane",
+            "{} is not set: not running inside a w0rk pane",
             hooks::RUN_ID_ENV
         )
     })?;
@@ -203,7 +200,7 @@ async fn run_poll(paths: &config::Paths, dry_run: bool, spawn_existing: bool) ->
     };
 
     let known = store.known_sources()?;
-    for source in sources::build(&config, sources::SourceContext::default()) {
+    for source in sources::build(&config) {
         let id = source.id();
         let items = match source.fetch(&runner).await {
             Ok(items) => items,

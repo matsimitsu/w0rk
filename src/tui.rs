@@ -16,7 +16,7 @@ use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 use crate::actions::{self, Renderer, RexSpawner, RunSpec, Spawner};
-use crate::config::{Config, LookbackHours, Paths};
+use crate::config::{Config, Paths};
 use crate::exec::SystemRunner;
 use crate::model::{BlockId, ItemEvent, ItemId, ProfileName, RunId, RunState, SourceId};
 use crate::rules::Mode;
@@ -28,8 +28,6 @@ use crate::ui::state::{App, Effect, ProfileChoice, ToastKind};
 const TICK: Duration = Duration::from_millis(250);
 /// Refresh the selected agent's pane output this often (in ticks).
 const CAPTURE_EVERY: usize = 8;
-/// Record that cockpit is alive this often (in ticks), so a crash still leaves a recent timestamp.
-const HEARTBEAT_EVERY: usize = 40;
 
 enum Msg {
     Key(event::KeyEvent),
@@ -54,7 +52,6 @@ enum Msg {
 type Rex = RexSpawner<SystemRunner>;
 
 struct Runtime {
-    source_context: sources::SourceContext,
     app: App,
     store: Store,
     config: Config,
@@ -74,15 +71,6 @@ pub async fn run(paths: &Paths) -> Result<()> {
     let store = Store::open(&paths.database)?;
     let now = Utc::now();
     store.interrupt_unlaunched_runs(now)?;
-
-    // "New since last run" compares against when cockpit was last alive, not when it started.
-    let lookback = config
-        .source
-        .appsignal
-        .as_ref()
-        .map_or_else(LookbackHours::default, |a| a.first_run_lookback_hours);
-    let since = since_last_run(store.last_invocation()?, now, lookback);
-    store.touch_invocation(now)?;
 
     let profiles = config
         .profiles
@@ -106,9 +94,6 @@ pub async fn run(paths: &Paths) -> Result<()> {
         paths.database.clone(),
     ));
     let mut runtime = Runtime {
-        source_context: sources::SourceContext {
-            since_last_run: Some(since),
-        },
         known: store.known_sources()?,
         renderer: Renderer::new(&paths.home),
         app,
@@ -138,7 +123,6 @@ pub async fn run(paths: &Paths) -> Result<()> {
     execute!(std::io::stdout(), EnableMouseCapture)?;
     let result = event_loop(&mut terminal, &mut runtime, &mut rx);
     let _ = execute!(std::io::stdout(), DisableMouseCapture);
-    let _ = runtime.store.touch_invocation(Utc::now());
     ratatui::restore();
     result
 }
@@ -180,16 +164,6 @@ fn spawn_input(tx: UnboundedSender<Msg>) {
     });
 }
 
-/// The cutoff for "new since last run": when cockpit was last alive, or a lookback window on the
-/// very first run.
-fn since_last_run(
-    previous: Option<chrono::DateTime<Utc>>,
-    now: chrono::DateTime<Utc>,
-    lookback: LookbackHours,
-) -> chrono::DateTime<Utc> {
-    previous.unwrap_or_else(|| now - chrono::Duration::hours(lookback.get()))
-}
-
 /// First line of the prompt, prefixed with the skill, for the profile picker.
 fn describe(profile: &actions::Profile) -> String {
     let first = profile
@@ -206,7 +180,7 @@ fn describe(profile: &actions::Profile) -> String {
 
 impl Runtime {
     fn start_pollers(&mut self) {
-        for source in sources::build(&self.config, self.source_context) {
+        for source in sources::build(&self.config) {
             let source: Arc<dyn Source> = Arc::from(source);
             let notify = Arc::new(Notify::new());
             self.syncs.push(Arc::clone(&notify));
@@ -264,9 +238,6 @@ impl Runtime {
         self.launch_pending();
         if self.app.tick.is_multiple_of(CAPTURE_EVERY) {
             self.capture_selected();
-        }
-        if self.app.tick.is_multiple_of(HEARTBEAT_EVERY) {
-            let _ = self.store.touch_invocation(Utc::now());
         }
     }
 
@@ -530,24 +501,4 @@ fn open_in_browser(url: &str) {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_cutoff_is_the_previous_invocation_or_a_lookback_window() {
-        let now = chrono::DateTime::UNIX_EPOCH + chrono::Duration::hours(100);
-        let before = now - chrono::Duration::hours(3);
-        assert_eq!(
-            since_last_run(Some(before), now, LookbackHours::default()),
-            before
-        );
-        assert_eq!(
-            since_last_run(None, now, LookbackHours::default()),
-            now - chrono::Duration::hours(24),
-            "first run looks back a day"
-        );
-    }
 }

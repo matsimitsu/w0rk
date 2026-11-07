@@ -1,4 +1,4 @@
-//! `~/.config/cockpit/config.toml`: hand-edited, no config UI.
+//! `~/.config/w0rk/config.toml`: hand-edited, no config UI.
 //!
 //! Rules, profiles and sections are added to this struct as those systems land. Unknown keys are
 //! rejected so typos surface instead of silently doing nothing.
@@ -132,20 +132,14 @@ fn default_states() -> Vec<IncidentState> {
     vec![IncidentState::Open]
 }
 
-/// Hours to look back on the very first run, when there is no previous invocation to compare to.
+/// A rolling window, in hours, measured back from now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(transparent)]
-pub struct LookbackHours(i64);
+pub struct WindowHours(i64);
 
-impl LookbackHours {
+impl WindowHours {
     pub fn get(self) -> i64 {
         self.0
-    }
-}
-
-impl Default for LookbackHours {
-    fn default() -> Self {
-        Self(24)
     }
 }
 
@@ -155,10 +149,10 @@ pub struct AppsignalApp {
     /// Which incident states to list. Several states are fetched separately and merged.
     #[serde(default = "default_states")]
     pub states: Vec<IncidentState>,
-    /// Only list incidents created since cockpit last ran. Incidents without a creation time are
-    /// treated as old.
-    #[serde(default)]
-    pub new_since_last_run: bool,
+    /// Only list incidents first seen within this many hours, like AppSignal's "new" deploy filter.
+    /// Rolling, so it does not depend on when w0rk last ran. Incidents without a creation time
+    /// are treated as old.
+    pub new_within_hours: Option<WindowHours>,
     pub name: AppName,
     #[serde(default = "production")]
     pub environment: Environment,
@@ -178,9 +172,6 @@ pub struct AppsignalConfig {
     pub org: Option<String>,
     #[serde(default = "default_poll")]
     pub poll_seconds: PollSeconds,
-    /// How far back "new since last run" looks the first time cockpit runs.
-    #[serde(default)]
-    pub first_run_lookback_hours: LookbackHours,
     #[serde(default, rename = "app")]
     pub apps: Vec<AppsignalApp>,
 }
@@ -251,7 +242,7 @@ pub struct RexConfig {
 }
 
 fn default_session() -> RexSession {
-    RexSession::new("cockpit")
+    RexSession::new("w0rk")
 }
 
 impl Default for RexConfig {
@@ -311,7 +302,7 @@ impl Config {
     }
 }
 
-/// Where cockpit keeps its files.
+/// Where w0rk keeps its files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {
     pub home: PathBuf,
@@ -323,8 +314,8 @@ impl Paths {
     pub fn from_home(home: &Path) -> Self {
         Self {
             home: home.to_owned(),
-            config: home.join(".config/cockpit/config.toml"),
-            database: home.join(".local/state/cockpit/cockpit.db"),
+            config: home.join(".config/w0rk/config.toml"),
+            database: home.join(".local/state/w0rk/w0rk.db"),
         }
     }
 
@@ -422,13 +413,10 @@ namespaces = ["web", "background"]
     #[test]
     fn paths_live_under_home() {
         let paths = Paths::from_home(Path::new("/home/me"));
-        assert_eq!(
-            paths.config,
-            Path::new("/home/me/.config/cockpit/config.toml")
-        );
+        assert_eq!(paths.config, Path::new("/home/me/.config/w0rk/config.toml"));
         assert_eq!(
             paths.database,
-            Path::new("/home/me/.local/state/cockpit/cockpit.db")
+            Path::new("/home/me/.local/state/w0rk/w0rk.db")
         );
     }
 }

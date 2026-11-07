@@ -50,7 +50,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, now: DateTime<Utc>) {
     let area = frame.area();
     if area.width < 60 || area.height < 12 {
         frame.render_widget(
-            Paragraph::new("Terminal too small for cockpit (need 60x12)."),
+            Paragraph::new("Terminal too small for w0rk (need 60x12)."),
             area,
         );
         return;
@@ -141,7 +141,7 @@ fn elapsed(run: &Run, now: DateTime<Utc>) -> String {
 
 fn draw_top_bar(frame: &mut Frame, app: &App, area: Rect, now: DateTime<Utc>) {
     let mut spans = vec![Span::styled(
-        " ◆ cockpit ",
+        " ◆ w0rk ",
         // No background: Rex paints the top padding with the first row's background, which makes
         // a coloured bar look two rows tall.
         Style::default().fg(BLUE).add_modifier(Modifier::BOLD),
@@ -943,7 +943,7 @@ mod tests {
         let mut app = app();
         let screen = render(&mut app);
         for expected in [
-            "cockpit",
+            "w0rk",
             "TO REVIEW (1)",
             "MY PULL REQUESTS (0)",
             "INCIDENTS (1)",

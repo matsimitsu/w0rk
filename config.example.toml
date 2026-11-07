@@ -1,9 +1,9 @@
-# Copy to ~/.config/cockpit/config.toml and edit.
+# Copy to ~/.config/w0rk/config.toml and edit.
 
 # ── Rex ──────────────────────────────────────────────────────────────────
 
 [rex]
-session = "cockpit"     # agents get a pane each in this session (created if missing)
+session = "w0rk"     # agents get a pane each in this session (created if missing)
 max_running = 4         # agents running or waiting at once; the rest queue
 
 # ── Sources ──────────────────────────────────────────────────────────────
@@ -34,14 +34,13 @@ include_drafts = true
 # org = "appsignal"                # only needed for deep links to incidents
 poll_seconds = 60
 
-first_run_lookback_hours = 24       # how far back "new since last run" looks on the very first run
 
 [[source.appsignal.app]]
 name = "AppSignal"
 environment = "production"
 namespaces = ["web", "background"]  # empty = all namespaces
 states = ["OPEN", "WIP"]            # OPEN, WIP, CLOSED. WIP shows who is already on it
-new_since_last_run = true           # only incidents created since cockpit last ran
+new_within_hours = 24               # only incidents first seen in the last 24h, rolling
 
 # ── Profiles: what to run ────────────────────────────────────────────────
 # Templates see `item` (id, title, url, kind, fingerprint, attrs.*) and `previous`
@@ -83,7 +82,7 @@ Check Dependabot PR {{ item.url }} ({{ item.title }}).
    odd: new install or post-install scripts, new network calls or telemetry, obfuscated code, changed
    maintainers or repository, unexpected permissions.
 2. Check that CI is green (`gh pr checks {{ item.attrs.number }} --repo {{ item.attrs.repo }}`).
-3. Report your verdict with `cockpit report ok "<summary>"` or `cockpit report needs-you "<what looks odd>"`.
+3. Report your verdict with `w0rk report ok "<summary>"` or `w0rk report needs-you "<what looks odd>"`.
 4. Only if the verdict is ok, CI is green and this is a patch or minor bump: merge it with
    `gh pr merge {{ item.attrs.number }} --repo {{ item.attrs.repo }} --squash`. Otherwise do not merge.
 """

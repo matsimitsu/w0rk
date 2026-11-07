@@ -77,7 +77,6 @@ impl Store {
              );
              CREATE TABLE IF NOT EXISTS hidden_namespaces (name TEXT PRIMARY KEY);
              CREATE TABLE IF NOT EXISTS ignored (item_id TEXT PRIMARY KEY, ignored_at TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS dismissals (
                 item_id     TEXT PRIMARY KEY,
                 fingerprint TEXT NOT NULL
@@ -194,32 +193,6 @@ impl Store {
             .collect())
     }
 
-    /// When cockpit was last alive, kept fresh by [`Store::touch_invocation`].
-    pub fn last_invocation(&self) -> Result<Option<DateTime<Utc>>, StoreError> {
-        let value: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT value FROM meta WHERE key = 'last_invocation'",
-                [],
-                |row| row.get(0),
-            )
-            .map(Some)
-            .or_else(|err| match err {
-                rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                other => Err(other),
-            })?;
-        Ok(value.map(|text| parse_time(&text)))
-    }
-
-    pub fn touch_invocation(&self, now: DateTime<Utc>) -> Result<(), StoreError> {
-        self.conn.execute(
-            "INSERT INTO meta (key, value) VALUES ('last_invocation', ?1)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![now.to_rfc3339()],
-        )?;
-        Ok(())
-    }
-
     /// Hide a finished run from the AGENTS list.
     pub fn clear_run(&self, run: RunId) -> Result<(), StoreError> {
         self.conn.execute(
@@ -229,10 +202,10 @@ impl Store {
         Ok(())
     }
 
-    /// Runs that were queued in memory when cockpit last exited can't be resumed.
+    /// Runs that were queued in memory when w0rk last exited can't be resumed.
     pub fn interrupt_unlaunched_runs(&self, now: DateTime<Utc>) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE runs SET state = 'stopped', summary = 'cockpit exited before this started',
+            "UPDATE runs SET state = 'stopped', summary = 'w0rk exited before this started',
                     updated_at = ?1
              WHERE state = 'queued' AND block IS NULL",
             params![now.to_rfc3339()],
@@ -710,18 +683,6 @@ mod tests {
 
         store.unignore(&id).unwrap();
         assert!(store.ignored().unwrap().is_empty());
-    }
-
-    #[test]
-    fn last_invocation_round_trips_and_moves_forward() {
-        let store = Store::open_in_memory().unwrap();
-        assert_eq!(store.last_invocation().unwrap(), None);
-        let first = DateTime::UNIX_EPOCH + chrono::Duration::seconds(100);
-        let second = DateTime::UNIX_EPOCH + chrono::Duration::seconds(200);
-        store.touch_invocation(first).unwrap();
-        assert_eq!(store.last_invocation().unwrap(), Some(first));
-        store.touch_invocation(second).unwrap();
-        assert_eq!(store.last_invocation().unwrap(), Some(second));
     }
 
     #[test]

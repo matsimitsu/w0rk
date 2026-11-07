@@ -74,29 +74,36 @@ pub struct AppsignalSource {
     app: AppsignalApp,
     org: Option<String>,
     poll: PollSeconds,
-    /// When set (and the app opts in), only incidents created at or after this are listed.
-    since: Option<DateTime<Utc>>,
+    /// Where "now" comes from, so tests can pin the rolling window.
+    clock: fn() -> DateTime<Utc>,
 }
 
 impl AppsignalSource {
-    pub fn new(
-        app: AppsignalApp,
-        org: Option<String>,
-        poll: PollSeconds,
-        since: Option<DateTime<Utc>>,
-    ) -> Self {
-        let since = since.filter(|_| app.new_since_last_run);
+    pub fn new(app: AppsignalApp, org: Option<String>, poll: PollSeconds) -> Self {
         Self {
             app,
             org,
             poll,
-            since,
+            clock: Utc::now,
         }
     }
 
+    #[cfg(test)]
+    fn with_clock(mut self, clock: fn() -> DateTime<Utc>) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// Incidents created before this are not wanted.
+    fn cutoff(&self) -> Option<DateTime<Utc>> {
+        self.app
+            .new_within_hours
+            .map(|hours| (self.clock)() - chrono::Duration::hours(hours.get()))
+    }
+
     fn list_spec(&self, state: IncidentState) -> CommandSpec {
-        // Creation order puts the newest incidents first, which is what "new since" needs.
-        let (order, limit) = if self.since.is_some() {
+        // Creation order puts the newest incidents first, which is what "new within" needs.
+        let (order, limit) = if self.app.new_within_hours.is_some() {
             ("--order=ID", LIMIT_SINCE)
         } else {
             ("--order=LAST", LIMIT)
@@ -140,11 +147,8 @@ impl AppsignalSource {
         }
     }
 
-    fn is_wanted(&self, incident: &Incident) -> bool {
-        match self.since {
-            None => true,
-            Some(since) => incident.created_at.is_some_and(|created| created >= since),
-        }
+    fn is_wanted(incident: &Incident, cutoff: Option<DateTime<Utc>>) -> bool {
+        cutoff.is_none_or(|cutoff| incident.created_at.is_some_and(|created| created >= cutoff))
     }
 
     fn to_item(&self, app_id: Option<&str>, incident: Incident) -> Item {
@@ -194,11 +198,17 @@ impl Source for AppsignalSource {
     }
 
     async fn fetch(&self, cli: &dyn CliRunner) -> Result<Vec<Item>, SourceError> {
+        let cutoff = self.cutoff();
         let mut incidents: Vec<Incident> = Vec::new();
         for state in &self.app.states {
             let spec = self.list_spec(*state);
             let listing: Listing = cli.run(&spec).await?.json(&spec)?;
-            incidents.extend(listing.incidents.into_iter().filter(|i| self.is_wanted(i)));
+            incidents.extend(
+                listing
+                    .incidents
+                    .into_iter()
+                    .filter(|i| Self::is_wanted(i, cutoff)),
+            );
         }
         let app_id = if self.org.is_some() && !incidents.is_empty() {
             self.app_id(cli).await
@@ -249,18 +259,7 @@ mod tests {
     }
 
     fn source(org: Option<&str>) -> AppsignalSource {
-        AppsignalSource::new(
-            app(""),
-            org.map(str::to_owned),
-            PollSeconds::default(),
-            None,
-        )
-    }
-
-    fn at(text: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(text)
-            .unwrap()
-            .with_timezone(&Utc)
+        AppsignalSource::new(app(""), org.map(str::to_owned), PollSeconds::default())
     }
 
     #[test]
@@ -315,7 +314,6 @@ mod tests {
             app(r#"states = ["OPEN", "WIP"]"#),
             None,
             PollSeconds::default(),
-            None,
         );
         let wip = LISTING
             .replace("14036", "14037")
@@ -333,29 +331,29 @@ mod tests {
         assert_eq!(states, ["OPEN", "WIP"]);
     }
 
+    fn pinned_now() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-11-05T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
     #[tokio::test]
-    async fn since_last_run_keeps_only_incidents_created_after_the_cutoff() {
-        let src = AppsignalSource::new(
-            app("new_since_last_run = true"),
-            None,
-            PollSeconds::default(),
-            Some(at("2026-10-01T00:00:00Z")),
-        );
-        let old = LISTING
-            .replace("14036", "1")
-            .replace("2026-09-17T01:05:00Z", "2026-09-01T00:00:00Z");
-        let no_creation_time = LISTING.replace("14036", "2").replace(
-            r#""createdAt":"2026-09-17T01:05:00Z""#,
-            r#""createdAt":null"#,
-        );
-        let new = LISTING
-            .replace("14036", "3")
-            .replace("2026-09-17T01:05:00Z", "2026-11-04T00:00:00Z");
+    async fn new_within_hours_keeps_only_incidents_first_seen_inside_the_window() {
+        let src = AppsignalSource::new(app("new_within_hours = 24"), None, PollSeconds::default())
+            .with_clock(pinned_now);
+        let incident = |number: &str, created: &str| {
+            incident_json(
+                &LISTING
+                    .replace("14036", number)
+                    .replace(r#""createdAt":"2026-09-17T01:05:00Z""#, created),
+            )
+        };
         let merged = format!(
-            r#"{{"incidents":[{},{},{}]}}"#,
-            incident_json(&new),
-            incident_json(&old),
-            incident_json(&no_creation_time),
+            r#"{{"incidents":[{},{},{},{}]}}"#,
+            incident("1", r#""createdAt":"2026-11-05T09:00:00Z""#), // 3h old
+            incident("2", r#""createdAt":"2026-11-04T13:00:00Z""#), // 23h old
+            incident("3", r#""createdAt":"2026-11-04T11:00:00Z""#), // 25h old
+            incident("4", r#""createdAt":null"#),
         );
         let cli = FakeRunner::new().respond(src.list_spec(IncidentState::Open), &merged);
 
@@ -365,24 +363,53 @@ mod tests {
             .iter()
             .map(|i| i.attrs["number"].as_u64().unwrap())
             .collect();
-        assert_eq!(numbers, [3]);
+        assert_eq!(numbers, [1, 2]);
         assert!(
             src.list_spec(IncidentState::Open)
                 .to_string()
-                .contains("--order=ID")
+                .contains("--order=ID"),
+            "creation order, so the newest come first"
         );
     }
 
     #[tokio::test]
-    async fn the_cutoff_is_ignored_unless_the_app_opts_in() {
-        let src = AppsignalSource::new(
-            app(""),
-            None,
-            PollSeconds::default(),
-            Some(at("2030-01-01T00:00:00Z")),
+    async fn the_window_is_rolling_not_tied_to_when_w0rk_started() {
+        let later = || pinned_now() + chrono::Duration::hours(10);
+        let src = AppsignalSource::new(app("new_within_hours = 24"), None, PollSeconds::default())
+            .with_clock(later);
+        let created = r#""createdAt":"2026-11-05T09:00:00Z""#;
+        let listing = LISTING.replace(r#""createdAt":"2026-09-17T01:05:00Z""#, created);
+        let cli = FakeRunner::new().respond(src.list_spec(IncidentState::Open), &listing);
+        assert_eq!(
+            src.fetch(&cli).await.unwrap().len(),
+            1,
+            "13h old at poll time"
         );
+
+        let much_later = || pinned_now() + chrono::Duration::hours(30);
+        let src = AppsignalSource::new(app("new_within_hours = 24"), None, PollSeconds::default())
+            .with_clock(much_later);
+        let cli = FakeRunner::new().respond(src.list_spec(IncidentState::Open), &listing);
+        assert!(
+            src.fetch(&cli).await.unwrap().is_empty(),
+            "33h old: it aged out"
+        );
+    }
+
+    #[tokio::test]
+    async fn without_a_window_nothing_is_filtered_by_age() {
+        let src = AppsignalSource::new(app(""), None, PollSeconds::default()).with_clock(|| {
+            DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        });
         let cli = FakeRunner::new().respond(src.list_spec(IncidentState::Open), LISTING);
         assert_eq!(src.fetch(&cli).await.unwrap().len(), 1);
+        assert!(
+            src.list_spec(IncidentState::Open)
+                .to_string()
+                .contains("--order=LAST")
+        );
     }
 
     /// The single incident object inside a `{"incidents":[...]}` document.

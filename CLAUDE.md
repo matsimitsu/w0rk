@@ -1,4 +1,4 @@
-# Cockpit
+# W0rk
 
 A Rust TUI that polls notification sources through their CLIs (`gh`, `appsignal-cli`), routes items with
 config-defined rules, and spawns Claude Code agents in Rex panes. No API clients: external tools are only
@@ -35,4 +35,4 @@ New slices (re-review delta, Dependabot merge, new sources) must be config plus 
 
 ## Config
 
-One hand-edited TOML file: `~/.config/cockpit/config.toml`. No config UI. State: `~/.local/state/cockpit/cockpit.db`.
+One hand-edited TOML file: `~/.config/w0rk/config.toml`. No config UI. State: `~/.local/state/w0rk/w0rk.db`.

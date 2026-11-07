@@ -179,7 +179,7 @@ impl std::str::FromStr for RunState {
     }
 }
 
-/// What the agent concluded, reported via `cockpit report`.
+/// What the agent concluded, reported via `w0rk report`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Verdict {

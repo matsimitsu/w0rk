@@ -1,6 +1,6 @@
-//! Spawns agents as Rex panes: `rex run -s <session> ... -- env COCKPIT_RUN_ID=<id> claude ...`.
+//! Spawns agents as Rex panes: `rex run -s <session> ... -- env W0RK_RUN_ID=<id> claude ...`.
 //!
-//! Progress comes back through Claude Code hooks (`cockpit hook <event>`), injected per run with
+//! Progress comes back through Claude Code hooks (`w0rk hook <event>`), injected per run with
 //! `--settings` so the user's own settings are untouched.
 
 use std::path::{Path, PathBuf};
@@ -13,8 +13,8 @@ use super::{RunSpec, SpawnError, Spawner};
 use crate::exec::{CliRunner, CommandSpec, Program};
 use crate::model::{BlockId, RexSession, RunId};
 
-/// Hook events cockpit listens to, and the `cockpit hook` argument for each.
-/// Directory inside a repo that holds cockpit's worktrees.
+/// Hook events w0rk listens to, and the `w0rk hook` argument for each.
+/// Directory inside a repo that holds w0rk's worktrees.
 pub const WORKTREES_DIR: &str = ".worktrees";
 
 pub const HOOKS: [(&str, &str); 4] = [
@@ -57,12 +57,19 @@ struct Created {
     block_ids: Vec<String>,
 }
 
+/// Output of `rex new`: the session starts with an empty shell window we don't want.
+#[derive(Deserialize, Default)]
+struct NewSession {
+    #[serde(default)]
+    initial_windows: Vec<Created>,
+}
+
 pub struct RexSpawner<R> {
     cli: R,
     session: RexSession,
-    /// The cockpit binary the hooks call back into.
+    /// The w0rk binary the hooks call back into.
     exe: PathBuf,
-    /// The state database hooks and `cockpit report` must write to (passed as `COCKPIT_DB`).
+    /// The state database hooks and `w0rk report` must write to (passed as `W0RK_DB`).
     database: PathBuf,
 }
 
@@ -88,10 +95,10 @@ impl<R: CliRunner> RexSpawner<R> {
         Self::rex().args(["new", session.as_str(), "--json"])
     }
 
-    /// Where a run's worktree lives: `<repo>/.worktrees/cockpit-run-<id>`. Inside the repo so
+    /// Where a run's worktree lives: `<repo>/.worktrees/w0rk-run-<id>`. Inside the repo so
     /// Claude Code's trust for the repo covers it.
     pub fn worktree_path(repo: &Path, id: RunId) -> PathBuf {
-        repo.join(WORKTREES_DIR).join(format!("cockpit-run-{id}"))
+        repo.join(WORKTREES_DIR).join(format!("w0rk-run-{id}"))
     }
 
     fn git(repo: &Path) -> CommandSpec {
@@ -113,7 +120,7 @@ impl<R: CliRunner> RexSpawner<R> {
             .arg(if from_fetch { "FETCH_HEAD" } else { "HEAD" })
     }
 
-    /// The `--settings` JSON that routes Claude Code hook events to `cockpit hook`.
+    /// The `--settings` JSON that routes Claude Code hook events to `w0rk hook`.
     pub fn hook_settings(exe: &Path) -> String {
         let exe = exe.to_string_lossy().replace('\'', r"'\''");
         let hooks: serde_json::Map<_, _> = HOOKS
@@ -132,11 +139,11 @@ impl<R: CliRunner> RexSpawner<R> {
     pub fn pane_spec(&self, run: &RunSpec, id: RunId, cwd: &Path) -> CommandSpec {
         Self::rex()
             .args(["run", "-s", self.session.as_str(), "--label", &run.label])
-            .args(["--keep-open", "--focus=false", "--json", "-c"])
+            .args(["--focus=false", "--json", "-c"])
             .arg(cwd.to_string_lossy())
             .args(["--", "env"])
-            .arg(format!("COCKPIT_RUN_ID={id}"))
-            .arg(format!("COCKPIT_DB={}", self.database.display()))
+            .arg(format!("W0RK_RUN_ID={id}"))
+            .arg(format!("W0RK_DB={}", self.database.display()))
             .args(["claude", "--settings"])
             .arg(Self::hook_settings(&self.exe))
             .args(&run.claude_args)
@@ -254,7 +261,9 @@ impl<R: CliRunner> RexSpawner<R> {
             .to_owned())
     }
 
-    async fn ensure_session(&self) -> Result<(), SpawnError> {
+    /// Make sure the session exists. When it had to be created, returns the blocks of the empty
+    /// shell window Rex opens by default, so the caller can close them once an agent pane exists.
+    async fn ensure_session(&self) -> Result<Vec<BlockId>, SpawnError> {
         let spec = Self::list_sessions_spec();
         let listing: Sessions = self.cli.run(&spec).await?.json(&spec)?;
         if listing
@@ -262,10 +271,16 @@ impl<R: CliRunner> RexSpawner<R> {
             .iter()
             .any(|s| s.label == self.session.as_str())
         {
-            return Ok(());
+            return Ok(Vec::new());
         }
-        self.cli.run(&Self::new_session_spec(&self.session)).await?;
-        Ok(())
+        let spec = Self::new_session_spec(&self.session);
+        let created: NewSession = self.cli.run(&spec).await?.json(&spec).unwrap_or_default();
+        Ok(created
+            .initial_windows
+            .into_iter()
+            .flat_map(|w| w.block_ids)
+            .map(BlockId::from)
+            .collect())
     }
 
     /// Keep `.worktrees/` out of `git status` via the repo-local exclude file (never committed).
@@ -312,7 +327,7 @@ impl<R: CliRunner> RexSpawner<R> {
 impl<R: CliRunner> Spawner for RexSpawner<R> {
     async fn spawn(&self, run: &RunSpec, id: RunId) -> Result<BlockId, SpawnError> {
         run.ensure_cwd()?;
-        self.ensure_session().await?;
+        let placeholder = self.ensure_session().await?;
         let cwd = if run.worktree {
             self.make_worktree(run, id).await?
         } else {
@@ -320,12 +335,17 @@ impl<R: CliRunner> Spawner for RexSpawner<R> {
         };
         let spec = self.pane_spec(run, id, &cwd);
         let created: Created = self.cli.run(&spec).await?.json(&spec)?;
-        created
+        let block = created
             .block_ids
             .into_iter()
             .next()
             .map(BlockId::from)
-            .ok_or(SpawnError::NoBlock)
+            .ok_or(SpawnError::NoBlock)?;
+        // Best effort: a leftover empty terminal is cosmetic, the agent is already running.
+        for empty in &placeholder {
+            let _ = self.close(empty).await;
+        }
+        Ok(block)
     }
 }
 
@@ -352,8 +372,8 @@ mod tests {
     fn spawner(cli: FakeRunner) -> RexSpawner<FakeRunner> {
         RexSpawner::new(
             cli,
-            RexSession::new("cockpit"),
-            PathBuf::from("/bin/cockpit"),
+            RexSession::new("w0rk"),
+            PathBuf::from("/bin/w0rk"),
             PathBuf::from("/state/c.db"),
         )
     }
@@ -363,14 +383,14 @@ mod tests {
     #[test]
     fn hook_settings_cover_every_event_and_quote_the_path() {
         let settings: serde_json::Value = serde_json::from_str(
-            &RexSpawner::<FakeRunner>::hook_settings(Path::new("/o'k/cockpit")),
+            &RexSpawner::<FakeRunner>::hook_settings(Path::new("/o'k/w0rk")),
         )
         .unwrap();
         for (event, arg) in HOOKS {
             let command = settings["hooks"][event][0]["hooks"][0]["command"]
                 .as_str()
                 .unwrap();
-            assert_eq!(command, format!(r"'/o'\''k/cockpit' hook {arg}"));
+            assert_eq!(command, format!(r"'/o'\''k/w0rk' hook {arg}"));
         }
     }
 
@@ -380,10 +400,7 @@ mod tests {
             Path::new("/w/appsignal-server"),
             RunId::new(7),
         );
-        assert_eq!(
-            path,
-            Path::new("/w/appsignal-server/.worktrees/cockpit-run-7")
-        );
+        assert_eq!(path, Path::new("/w/appsignal-server/.worktrees/w0rk-run-7"));
     }
 
     #[test]
@@ -396,7 +413,7 @@ mod tests {
                 Path::new("/tmp"),
             )
             .to_string();
-        assert!(text.starts_with("rex run -s cockpit --label github:r#1 --keep-open --focus=false --json -c /tmp -- env COCKPIT_RUN_ID=3 COCKPIT_DB=/state/c.db claude --settings "));
+        assert!(text.starts_with("rex run -s w0rk --label github:r#1 --focus=false --json -c /tmp -- env W0RK_RUN_ID=3 W0RK_DB=/state/c.db claude --settings "));
         assert!(text.ends_with("--permission-mode plan /code-review https://x/1"));
     }
 
@@ -408,7 +425,7 @@ mod tests {
         let cli = FakeRunner::new()
             .respond(
                 RexSpawner::<FakeRunner>::list_sessions_spec(),
-                r#"{"sessions":[{"label":"cockpit"}]}"#,
+                r#"{"sessions":[{"label":"w0rk"}]}"#,
             )
             .respond(s.pane_spec(&r, RunId::new(1), &dir), BLOCK);
         let spawner = spawner(cli);
@@ -438,12 +455,16 @@ mod tests {
                 r#"{"sessions":[]}"#,
             )
             .respond(
-                RexSpawner::<FakeRunner>::new_session_spec(&RexSession::new("cockpit")),
-                "{}",
+                RexSpawner::<FakeRunner>::new_session_spec(&RexSession::new("w0rk")),
+                r#"{"initial_windows":[{"window_id":"window:0","block_ids":["block:0"]}]}"#,
             )
             .respond(
                 spawner(FakeRunner::new()).pane_spec(&r, RunId::new(1), &dir),
                 BLOCK,
+            )
+            .respond(
+                spawner(FakeRunner::new()).close_spec(&BlockId::new("block:0")),
+                "",
             );
         let spawner = spawner(cli);
 
@@ -454,20 +475,25 @@ mod tests {
                 .cli
                 .calls()
                 .iter()
-                .any(|c| c.to_string() == "rex new cockpit --json")
+                .any(|c| c.to_string() == "rex new w0rk --json")
+        );
+        // The empty shell window Rex creates with the session is closed again.
+        assert_eq!(
+            spawner.cli.calls().last().unwrap().to_string(),
+            "rex block close block:0 -s w0rk"
         );
     }
 
     #[tokio::test]
     async fn worktree_runs_fetch_then_add_then_open_the_pane_inside_it() {
-        let repo = std::env::temp_dir().join(format!("cockpit-wt-test-{}", std::process::id()));
+        let repo = std::env::temp_dir().join(format!("w0rk-wt-test-{}", std::process::id()));
         std::fs::create_dir_all(&repo).unwrap();
         let r = run(repo.clone(), true, Some("pull/1/head"));
         let wt = RexSpawner::<FakeRunner>::worktree_path(&repo, RunId::new(9));
         let cli = FakeRunner::new()
             .respond(
                 RexSpawner::<FakeRunner>::list_sessions_spec(),
-                r#"{"sessions":[{"label":"cockpit"}]}"#,
+                r#"{"sessions":[{"label":"w0rk"}]}"#,
             )
             .respond(
                 RexSpawner::<FakeRunner>::exclude_path_spec(&repo),
@@ -523,7 +549,7 @@ mod tests {
         let cli = FakeRunner::new()
             .respond(
                 RexSpawner::<FakeRunner>::list_sessions_spec(),
-                r#"{"sessions":[{"session_id":"session:9","label":"cockpit"}]}"#,
+                r#"{"sessions":[{"session_id":"session:9","label":"w0rk"}]}"#,
             )
             .respond(
                 RexSpawner::<FakeRunner>::list_clients_spec(),
@@ -541,7 +567,7 @@ mod tests {
             .iter()
             .map(ToString::to_string)
             .collect();
-        assert_eq!(calls.last().unwrap(), "rex block focus block:1 -s cockpit");
+        assert_eq!(calls.last().unwrap(), "rex block focus block:1 -s w0rk");
         assert!(
             calls.contains(&"rex -C client:app do session.select session_id=session:9".to_owned())
         );
@@ -554,7 +580,7 @@ mod tests {
         let cli = FakeRunner::new()
             .respond(
                 RexSpawner::<FakeRunner>::list_sessions_spec(),
-                r#"{"sessions":[{"session_id":"s","label":"cockpit"}]}"#,
+                r#"{"sessions":[{"session_id":"s","label":"w0rk"}]}"#,
             )
             .respond(
                 RexSpawner::<FakeRunner>::list_clients_spec(),
@@ -582,8 +608,8 @@ mod tests {
         assert_eq!(
             calls,
             [
-                "rex send -s cockpit -b block:1 y",
-                "rex send-key -s cockpit -b block:1 enter"
+                "rex send -s w0rk -b block:1 y",
+                "rex send-key -s w0rk -b block:1 enter"
             ]
         );
     }

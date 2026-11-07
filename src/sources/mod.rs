@@ -30,15 +30,8 @@ pub trait Source: Send + Sync {
     async fn fetch(&self, cli: &dyn CliRunner) -> Result<Vec<Item>, SourceError>;
 }
 
-/// Things known at startup that sources may use.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SourceContext {
-    /// When cockpit last ran, for sources configured to show only what is new since then.
-    pub since_last_run: Option<chrono::DateTime<chrono::Utc>>,
-}
-
 /// Build every source the config asks for.
-pub fn build(config: &Config, context: SourceContext) -> Vec<Box<dyn Source>> {
+pub fn build(config: &Config) -> Vec<Box<dyn Source>> {
     let mut sources: Vec<Box<dyn Source>> = Vec::new();
     if let Some(github) = &config.source.github {
         sources.push(Box::new(GithubSource::new(github.clone())));
@@ -49,7 +42,6 @@ pub fn build(config: &Config, context: SourceContext) -> Vec<Box<dyn Source>> {
                 app.clone(),
                 appsignal.org.clone(),
                 appsignal.poll_seconds,
-                context.since_last_run,
             )));
         }
     }
@@ -78,10 +70,7 @@ mod tests {
         )
         .unwrap();
 
-        let ids: Vec<String> = build(&config, SourceContext::default())
-            .iter()
-            .map(|s| s.id().to_string())
-            .collect();
+        let ids: Vec<String> = build(&config).iter().map(|s| s.id().to_string()).collect();
         assert_eq!(
             ids,
             ["github", "appsignal:AppSignal", "appsignal:PublicApi"]

@@ -1,5 +1,5 @@
-//! `cockpit hook <event>` and `cockpit report`: how a running agent tells cockpit what it's doing.
-//! Both identify the run through `COCKPIT_RUN_ID`, which the spawner sets on the pane.
+//! `w0rk hook <event>` and `w0rk report`: how a running agent tells w0rk what it's doing.
+//! Both identify the run through `W0RK_RUN_ID`, which the spawner sets on the pane.
 
 use chrono::{DateTime, Utc};
 
@@ -14,9 +14,9 @@ pub enum HookEvent {
     Stop,
 }
 
-pub const RUN_ID_ENV: &str = "COCKPIT_RUN_ID";
+pub const RUN_ID_ENV: &str = "W0RK_RUN_ID";
 
-/// Read the run id from the environment value, if the process was started by cockpit.
+/// Read the run id from the environment value, if the process was started by w0rk.
 pub fn run_id_from(value: Option<&str>) -> Option<RunId> {
     value?.trim().parse().ok().map(RunId::new)
 }

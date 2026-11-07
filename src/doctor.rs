@@ -1,4 +1,4 @@
-//! `cockpit doctor`: verify the external tools cockpit depends on are usable.
+//! `w0rk doctor`: verify the external tools w0rk depends on are usable.
 
 use crate::exec::{CliRunner, CommandSpec, Program};
 
